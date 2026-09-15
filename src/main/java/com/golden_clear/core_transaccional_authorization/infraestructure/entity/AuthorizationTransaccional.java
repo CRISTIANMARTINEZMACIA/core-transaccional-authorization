@@ -1,10 +1,16 @@
 package com.golden_clear.core_transaccional_authorization.infraestructure.entity;
 
 import jakarta.persistence.*;
+import lombok.*;
 
 import java.math.BigDecimal;
 import java.time.Instant;
 
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
 @Entity
 @Table(name = "transacciones_autorizadas")
 public class AuthorizationTransaccional {

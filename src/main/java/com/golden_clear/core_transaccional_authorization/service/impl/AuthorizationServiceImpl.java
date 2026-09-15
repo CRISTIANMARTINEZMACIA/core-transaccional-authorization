@@ -6,13 +6,18 @@ import com.golden_clear.core_transaccional_authorization.infraestructure.entity.
 import com.golden_clear.core_transaccional_authorization.infraestructure.repository.AuthorizationTransaccionalRepository;
 import com.golden_clear.core_transaccional_authorization.service.AuthorizationService;
 import com.golden_clear.core_transaccional_authorization.service.CardNetworkService;
-import com.golden_clear.core_transaccional_authorization.service.external.CardNetworkAuthorizationRequest;
-import com.golden_clear.core_transaccional_authorization.service.external.CardNetworkAuthorizationResponse;
+import com.golden_clear.core_transaccional_authorization.dto.request.CardNetworkAuthorizationRequest;
+import com.golden_clear.core_transaccional_authorization.dto.response.CardNetworkAuthorizationResponse;
+import com.golden_clear.core_transaccional_authorization.service.TransactionEventPublisherService;
+import com.golden_clear.core_transaccional_authorization.shared.enums.AuthorizationStatus;
 import com.golden_clear.core_transaccional_authorization.shared.exception.AuthorizationNotFoundException;
 import com.golden_clear.core_transaccional_authorization.shared.mappers.AuthorizationMapper;
+import com.golden_clear.core_transaccional_authorization.shared.util.CardTokenGenerator;
+
+
 import lombok.RequiredArgsConstructor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,15 +25,17 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class AuthorizationServiceImpl implements AuthorizationService {
 
-    private static final Logger log = LoggerFactory.getLogger(AuthorizationServiceImpl.class);
-
     private final AuthorizationTransaccionalRepository repository;
     private final CardNetworkService cardNetworkService;
+    private final TransactionEventPublisherService transactionEventPublisherService;
+    private final AuthorizationMapper mapper;
 
     @Override
     @Transactional
+    @CacheEvict(value = "cardBalances")
     public AuthorizationTransaccionalResponse authorize(AuthorizationTransaccionalRequest request) {
         CardNetworkAuthorizationRequest networkRequest = new CardNetworkAuthorizationRequest(
+                CardTokenGenerator.generate(request.pan()),
                 request.pan(),
                 request.expirationDate(),
                 request.cvv(),
@@ -42,20 +49,28 @@ public class AuthorizationServiceImpl implements AuthorizationService {
 
         CardNetworkAuthorizationResponse networkResponse = cardNetworkService.authorize(networkRequest);
 
-        AuthorizationTransaccional entity = AuthorizationMapper.toEntity(request, networkResponse);
+        AuthorizationTransaccional entity = mapper.toEntity(request, networkResponse);
         AuthorizationTransaccional saved = repository.save(entity);
 
-        log.info("Transacción procesada transactionId={} stan={} responseCode={}",
-                saved.getTransactionId(), saved.getStan(), saved.getResponseCode());
+        if ( resolveStatus(networkResponse.responseCode()) == AuthorizationStatus.APPROVED) {
+            transactionEventPublisherService.publish(mapper.toTransactionEventResponse(saved));
+        }
 
-        return AuthorizationMapper.toResponse(saved);
+        return mapper.toResponse(saved);
+    }
+
+    static AuthorizationStatus resolveStatus(String responseCode) {
+        if (responseCode == null) {
+            return AuthorizationStatus.ERROR;
+        }
+        return "00".equals(responseCode) ? AuthorizationStatus.APPROVED : AuthorizationStatus.DECLINED;
     }
 
     @Override
-    @Transactional(readOnly = true)
+    @Cacheable(value = "cardAuthorization", key = "#transactionId")
     public AuthorizationTransaccionalResponse findByTransactionId(String transactionId) {
         AuthorizationTransaccional entity = repository.findById(transactionId)
                 .orElseThrow(() -> new AuthorizationNotFoundException(transactionId));
-        return AuthorizationMapper.toResponse(entity);
+        return mapper.toResponse(entity);
     }
 }

@@ -1,54 +1,86 @@
 package com.golden_clear.core_transaccional_authorization.service.impl;
 
+import com.golden_clear.core_transaccional_authorization.dto.request.CardNetworkAuthorizationRequest;
+import com.golden_clear.core_transaccional_authorization.dto.response.CardNetworkAuthorizationResponse;
+import com.golden_clear.core_transaccional_authorization.infraestructure.entity.CardAccount;
+import com.golden_clear.core_transaccional_authorization.infraestructure.repository.CardAccountRepository;
+import com.golden_clear.core_transaccional_authorization.service.CardAccountService;
 import com.golden_clear.core_transaccional_authorization.service.CardNetworkService;
-import com.golden_clear.core_transaccional_authorization.service.external.CardNetworkAuthorizationRequest;
-import com.golden_clear.core_transaccional_authorization.service.external.CardNetworkAuthorizationResponse;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.golden_clear.core_transaccional_authorization.shared.enums.CardStatus;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.YearMonth;
+import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
 
-/**
- * Simula la comunicación con una red de tarjetas real: agrega latencia de red y decide
- * la aprobación/declinación de la transacción mediante reglas simples, generando un
- * código de respuesta estilo ISO 8583 y, si aplica, un código de autorización.
- * <p>
- * Reemplazar por una implementación real de {@link CardNetworkService} cuando exista
- * integración con el adquirente/red de tarjetas.
- */
+
 @Service
+@RequiredArgsConstructor
 public class CardNetworkSimulatorService implements CardNetworkService {
 
-    private static final Logger log = LoggerFactory.getLogger(CardNetworkSimulatorService.class);
-
     private static final String RESPONSE_CODE_APPROVED = "00";
-    private static final String RESPONSE_CODE_DECLINED_GENERIC = "05";
+    private static final String RESPONSE_CODE_INVALID_CARD = "14";
     private static final String RESPONSE_CODE_INSUFFICIENT_FUNDS = "51";
+    private static final String RESPONSE_CODE_EXPIRED_CARD = "54";
+    private static final String RESPONSE_CODE_EXCEEDS_DAILY_LIMIT = "61";
+    private static final String RESPONSE_CODE_RESTRICTED_CARD = "62";
 
-    private static final BigDecimal INSUFFICIENT_FUNDS_THRESHOLD = new BigDecimal("5000000");
-    private static final double RANDOM_DECLINE_PROBABILITY = 0.1;
     private static final int MIN_LATENCY_MS = 50;
     private static final int MAX_LATENCY_MS = 300;
 
+    private final CardAccountService cardAccountService;
+
     @Override
+    @Transactional
     public CardNetworkAuthorizationResponse authorize(CardNetworkAuthorizationRequest request) {
         simulateNetworkLatency();
 
-        if (request.amount().compareTo(INSUFFICIENT_FUNDS_THRESHOLD) > 0) {
-            log.info("Red de tarjetas: fondos insuficientes stan={} amount={}", request.stan(), request.amount());
+        Optional<CardAccount> cardAccountOptional = cardAccountService.getCardAccount(request.cardToken());
+
+        if (cardAccountOptional.isEmpty()) {
+            return new CardNetworkAuthorizationResponse(RESPONSE_CODE_INVALID_CARD, null);
+        }
+
+        CardAccount cardAccount = cardAccountOptional.get();
+
+        if (cardAccount.getCardStatus() != CardStatus.ACTIVE) {
+            return new CardNetworkAuthorizationResponse(RESPONSE_CODE_RESTRICTED_CARD, null);
+        }
+
+        if (isExpired(cardAccount.getExpirationDate())) {
+            return new CardNetworkAuthorizationResponse(RESPONSE_CODE_EXPIRED_CARD, null);
+        }
+
+        resetDailySpentIfNewDay(cardAccount);
+
+        if (cardAccount.getDailyLimit() != null
+                && cardAccount.getDailySpent().add(request.amount()).compareTo(cardAccount.getDailyLimit()) > 0) {
+            return new CardNetworkAuthorizationResponse(RESPONSE_CODE_EXCEEDS_DAILY_LIMIT, null);
+        }
+
+        if (cardAccount.getAvailableBalance().compareTo(request.amount()) < 0) {
             return new CardNetworkAuthorizationResponse(RESPONSE_CODE_INSUFFICIENT_FUNDS, null);
         }
 
-        if (ThreadLocalRandom.current().nextDouble() < RANDOM_DECLINE_PROBABILITY) {
-            log.info("Red de tarjetas: declinada por el emisor stan={}", request.stan());
-            return new CardNetworkAuthorizationResponse(RESPONSE_CODE_DECLINED_GENERIC, null);
-        }
-
         String authorizationCode = generateAuthorizationCode();
-        log.info("Red de tarjetas: aprobada stan={} authorizationCode={}", request.stan(), authorizationCode);
         return new CardNetworkAuthorizationResponse(RESPONSE_CODE_APPROVED, authorizationCode);
+    }
+
+    private boolean isExpired(String expirationDateMMYY) {
+        int month = Integer.parseInt(expirationDateMMYY.substring(0, 2));
+        int year = 2000 + Integer.parseInt(expirationDateMMYY.substring(2, 4));
+        return YearMonth.of(year, month).isBefore(YearMonth.now());
+    }
+
+    private void resetDailySpentIfNewDay(CardAccount cardAccount) {
+        if (cardAccount.getDailySpentResetAt().isBefore(LocalDate.now())) {
+            cardAccount.setDailySpent(BigDecimal.ZERO);
+            cardAccount.setDailySpentResetAt(LocalDate.now());
+        }
     }
 
     private String generateAuthorizationCode() {

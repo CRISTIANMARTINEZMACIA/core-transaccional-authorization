@@ -1,4 +1,4 @@
-package com.golden_clear.core_transaccional_authorization.service.external;
+package com.golden_clear.core_transaccional_authorization.dto.response;
 
 
 public record CardNetworkAuthorizationResponse(
