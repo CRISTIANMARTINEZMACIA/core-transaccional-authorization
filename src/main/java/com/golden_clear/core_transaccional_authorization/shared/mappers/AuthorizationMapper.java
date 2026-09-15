@@ -43,11 +43,6 @@ public interface AuthorizationMapper {
     @Mapping(target = "schemaVersion", constant = "1")
     TransactionEvent toTransactionEventResponse(AuthorizationTransaccional entity);
 
-    /**
-     * Único método (String -> AuthorizationStatus) del mapper: al no competir con otro de
-     * igual firma, MapStruct puede usarlo sin ambigüedad, a diferencia de los helpers
-     * String -> String que viven en {@link AuthorizationMappingSupport}.
-     */
     default AuthorizationStatus resolveStatus(String responseCode) {
         return AuthorizationMappingSupport.resolveStatus(responseCode);
     }

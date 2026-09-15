@@ -9,7 +9,6 @@ import com.golden_clear.core_transaccional_authorization.service.CardNetworkServ
 import com.golden_clear.core_transaccional_authorization.dto.request.CardNetworkAuthorizationRequest;
 import com.golden_clear.core_transaccional_authorization.dto.response.CardNetworkAuthorizationResponse;
 import com.golden_clear.core_transaccional_authorization.service.TransactionEventPublisherService;
-import com.golden_clear.core_transaccional_authorization.shared.enums.AuthorizationStatus;
 import com.golden_clear.core_transaccional_authorization.shared.exception.AuthorizationNotFoundException;
 import com.golden_clear.core_transaccional_authorization.shared.mappers.AuthorizationMapper;
 import com.golden_clear.core_transaccional_authorization.shared.util.CardTokenGenerator;
@@ -32,7 +31,7 @@ public class AuthorizationServiceImpl implements AuthorizationService {
 
     @Override
     @Transactional
-    @CacheEvict(value = "cardBalances")
+    @CacheEvict(value = "cardAuthorization")
     public AuthorizationTransaccionalResponse authorize(AuthorizationTransaccionalRequest request) {
         CardNetworkAuthorizationRequest networkRequest = new CardNetworkAuthorizationRequest(
                 CardTokenGenerator.generate(request.pan()),
@@ -47,24 +46,18 @@ public class AuthorizationServiceImpl implements AuthorizationService {
                 request.stan()
         );
 
+
         CardNetworkAuthorizationResponse networkResponse = cardNetworkService.authorize(networkRequest);
 
         AuthorizationTransaccional entity = mapper.toEntity(request, networkResponse);
         AuthorizationTransaccional saved = repository.save(entity);
 
-        if ( resolveStatus(networkResponse.responseCode()) == AuthorizationStatus.APPROVED) {
-            transactionEventPublisherService.publish(mapper.toTransactionEventResponse(saved));
-        }
+        transactionEventPublisherService.publish(mapper.toTransactionEventResponse(saved));
 
         return mapper.toResponse(saved);
     }
 
-    static AuthorizationStatus resolveStatus(String responseCode) {
-        if (responseCode == null) {
-            return AuthorizationStatus.ERROR;
-        }
-        return "00".equals(responseCode) ? AuthorizationStatus.APPROVED : AuthorizationStatus.DECLINED;
-    }
+
 
     @Override
     @Cacheable(value = "cardAuthorization", key = "#transactionId")

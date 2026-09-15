@@ -32,14 +32,14 @@ public class CardNetworkSimulatorService implements CardNetworkService {
     private static final int MIN_LATENCY_MS = 50;
     private static final int MAX_LATENCY_MS = 300;
 
-    private final CardAccountService cardAccountService;
+    private final CardAccountRepository cardAccountRepository;
 
     @Override
     @Transactional
     public CardNetworkAuthorizationResponse authorize(CardNetworkAuthorizationRequest request) {
         simulateNetworkLatency();
 
-        Optional<CardAccount> cardAccountOptional = cardAccountService.getCardAccount(request.cardToken());
+        Optional<CardAccount> cardAccountOptional = cardAccountRepository.findById(request.cardToken());
 
         if (cardAccountOptional.isEmpty()) {
             return new CardNetworkAuthorizationResponse(RESPONSE_CODE_INVALID_CARD, null);

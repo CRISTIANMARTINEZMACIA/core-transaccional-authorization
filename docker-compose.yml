@@ -79,6 +79,8 @@ services:
       DB_NAME: core_transaccional_authorization
     ports:
       - "8082:8082"
+    networks:
+      - findcard-net
 
   backend-audit:
     build: ../audit-notification
@@ -90,9 +92,11 @@ services:
     environment:
       DB_HOST: postgres
       DB_PORT: 5432
-      DB_NAME: audit_notification
+      DB_NAME: audit_transaction
     ports:
       - "8084:8084"
+    networks:
+      - findcard-net
 
 volumes:
   kafka-data:
